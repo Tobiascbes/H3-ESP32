@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Touch Count</title>
+  <script>
+    var gateway = `ws://${window.location.hostname}:81/ws`;
+    var websocket;
+    window.addEventListener('load', onload);
+
+    function onload(event) {
+      initWebSocket();
+    }
+
+    function initWebSocket() {
+      console.log('Trying to open a WebSocket connection...');
+      websocket = new WebSocket(gateway);
+      websocket.onopen = onOpen;
+      websocket.onclose = onClose;
+      websocket.onmessage = onMessage;
+    }
+
+    function onOpen(event) {
+      console.log('Connection opened');
+      getCount();
+    }
+
+    function onClose(event) {
+      console.log('Connection closed');
+      setTimeout(initWebSocket, 2000);
+    }
+
+    function onMessage(event) {
+      console.log(`Message received: ${event.data}`);
+      document.getElementById('touchCount').textContent = event.data;
+    }
+
+    function getCount() {
+      websocket.send("getCount");
+    }
+
+    function deleteCount() {
+      fetch('/deleteCount')
+        .then(response => response.text())
+        .then(data => {
+          console.log(data);
+          document.getElementById('touchCount').innerText = '0';
+        });
+    }
+
+    function deleteCred() {
+      fetch('/deleteCred')
+        .then(response => response.text())
+        .then(data => {
+          console.log(data);
+          document.getElementById('touchCount').innerText = '0';
+        });
+    }
+    
+    function deleteAll() {
+      fetch('/deleteAll')
+        .then(response => response.text())
+        .then(data => {
+          console.log(data);
+          document.getElementById('touchCount').innerText = '0';
+        });
+    }
+  </script>
+</head>
+<body>
+  <h1>Touch Count: <span id="touchCount">0</span></h1>
+  <button onclick="deleteCount()">Delete Count</button>
+  <button onclick="deleteCred()">Delete Cred</button>
+  <button onclick="deleteAll()">Delete All</button>
+</body>
+</html>
