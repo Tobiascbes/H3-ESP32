@@ -1,3 +1,14 @@
+/**
+ * @file main.cpp
+ * @brief ESP32 project for handling WiFi credentials, WebSocket, and SPIFFS file management.
+ * 
+ * Features:
+ * - Save WiFi credentials via a web form.
+ * - Switch between AP and Station modes based on saved credentials.
+ * - Touch count logging and WebSocket notifications.
+ * - File management using SPIFFS.
+ */
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -5,28 +16,54 @@
 #include <FS.h>
 #include "ESPAsyncWebServer.h"
 #include "AsyncTCP.h"
+#include "ArduinoJson.h"
 
+// Global Variables
+/** @brief Soft AP SSID */
 const char* ap_ssid = "TTESP32";
+
+/** @brief Soft AP password */
 const char* ap_password = "12345678";
 
+/** @brief Saved SSID from SPIFFS */
 String savedSSID;
+
+/** @brief Saved Password from SPIFFS */
 String savedPassword;
 
-IPAddress local_ip(192,168,1,1);
-IPAddress gateway(192,168,1,1);
-IPAddress subnet(255,255,255,0);
+/** @brief Local IP for Soft AP */
+IPAddress local_ip(192, 168, 1, 1);
 
-WebServer server(80); // WebServer on port 80
-AsyncWebServer asyncServer(81); // AsyncWebServer on port 81
-AsyncWebSocket ws("/ws"); // WebSocket server
+/** @brief Gateway IP for Soft AP */
+IPAddress gateway(192, 168, 1, 1);
 
+/** @brief Subnet mask for Soft AP */
+IPAddress subnet(255, 255, 255, 0);
+
+/** @brief WebServer instance running on port 80 */
+WebServer server(80);
+
+/** @brief AsyncWebServer instance running on port 81 */
+AsyncWebServer asyncServer(81);
+
+/** @brief WebSocket server for real-time touch count updates */
+AsyncWebSocket ws("/ws");
+
+/** @brief Pin number for physical button */
 int buttonPin = 21;
+
+/** @brief State of the physical button */
 int buttonState = 0;
 
-#define TOUCH_PIN T0 // Touch pin
-int touchCount = 0; // Variable to hold the touch count
+/** @brief Pin number for touch sensor */
+#define TOUCH_PIN T0
 
-// HTML code for the soft Access point web:
+/** @brief Counter for touch events */
+int touchCount = 0;
+
+/** 
+ * @brief HTML form for WiFi credentials input 
+ */
 const char* html_form = R"(
 <!DOCTYPE html>
 <html>
@@ -43,14 +80,23 @@ const char* html_form = R"(
 </html>
 )";
 
+/**
+ * @brief Handles 404 errors for WebServer.
+ */
 void handle_NotFound() {
   server.send(404, "text/plain", "Not found");
 }
 
+/**
+ * @brief Serves the root HTML form for WiFi credentials input.
+ */
 void handleRoot() {
   server.send(200, "text/html", html_form);
 }
 
+/**
+ * @brief Reads saved WiFi credentials from SPIFFS.
+ */
 void readSpiff() {
   File file = SPIFFS.open("/Cred.txt", "r");
   if (!file) {
@@ -58,101 +104,111 @@ void readSpiff() {
     return;
   }
 
-  Serial.println("Reading file content:");
   while (file.available()) {
     String line = file.readStringUntil('\n');
-    Serial.println(line);
     if (line.startsWith("SSID: ")) {
       savedSSID = line.substring(6);
-      savedSSID.trim(); // Trim any leading or trailing spaces
+      savedSSID.trim();
     } else if (line.startsWith("Password: ")) {
       savedPassword = line.substring(10);
-      savedPassword.trim(); // Trim any leading or trailing spaces
+      savedPassword.trim();
     }
   }
   file.close();
-  Serial.println("\nFile closed");
-
-  // Print the extracted SSID and Password
-  Serial.println("Extracted SSID: " + savedSSID);
-  Serial.println("Extracted Password: " + savedPassword);
 }
 
+/**
+ * @brief Saves WiFi credentials submitted via the web form to SPIFFS.
+ */
 void handleSave() {
-  // Check if both SSID and password fields are present
   if (server.hasArg("ssid") && server.hasArg("password")) {
     String input_ssid = server.arg("ssid");
     String input_password = server.arg("password");
 
-    // Open file for writing
     File file = SPIFFS.open("/Cred.txt", "w");
     if (!file) {
       server.send(500, "text/plain", "Failed to open file for writing");
-      Serial.println("Failed to open file for writing");
       return;
     }
 
-    // Write SSID and Password to file
     file.println("SSID: " + input_ssid);
     file.println("Password: " + input_password);
     file.close();
 
     server.send(200, "text/plain", "Credentials saved successfully");
-    Serial.println("Credentials saved successfully:");
-    Serial.println("SSID: " + input_ssid);
-    Serial.println("Password: " + input_password);
-    ESP.restart();
+    ESP.restart(); // Restart ESP to apply changes
   } else {
     server.send(400, "text/plain", "Invalid request");
   }
 }
 
-void notifyClients() {
-  ws.textAll(String(touchCount));
-  Serial.println("Notifying WebSocket clients of touch count: " + String(touchCount)); // Debug log
+/**
+ * @brief Logs an impulse event to impulses.json in SPIFFS.
+ */
+void logImpulse() {
+  File file = SPIFFS.open("/impulses.json", "a");
+  if (!file) {
+    Serial.println("Failed to open impulses file for appending");
+    return;
+  }
+
+  DynamicJsonDocument doc(1024);
+  doc["timestamp"] = millis();
+  doc["impulse"] = "Impulse detected";
+
+  serializeJson(doc, file);
+  file.println();
+  file.close();
 }
 
+/**
+ * @brief Notifies WebSocket clients of the updated touch count.
+ */
+void notifyClients() {
+  ws.textAll(String(touchCount));
+}
+
+/**
+ * @brief Updates the touch count file in SPIFFS.
+ */
 void updateTouchCountFile() {
-  File file = SPIFFS.open("/count.txt", "w");
+  File file = SPIFFS.open("/count.json", "w");
   if (!file) {
-    Serial.println("Failed to open count.txt for writing");
+    Serial.println("Failed to open count.json for writing");
     return;
   }
   file.println(touchCount);
   file.close();
-
-  // Debug: Print the contents of count.txt to the serial monitor
-  file = SPIFFS.open("/count.txt", "r");
-  if (file) {
-    Serial.println("Contents of count.txt:");
-    while (file.available()) {
-      String line = file.readStringUntil('\n');
-      Serial.println(line);
-    }
-    file.close();
-  } else {
-    Serial.println("Failed to open count.txt for reading");
-  }
 }
 
+/**
+ * @brief ISR for handling touch sensor events.
+ */
 void onTouch() {
   touchCount++;
   updateTouchCountFile();
   notifyClients();
 }
 
+/**
+ * @brief Deletes the touch count file from SPIFFS.
+ */
 void spiffDeleteCount() {
-  if (SPIFFS.remove("/count.txt")) {
-    Serial.println("count.txt deleted successfully");
+  if (SPIFFS.remove("/count.json")) {
+    Serial.println("count.json deleted successfully");
   } else {
-    Serial.println("Failed to delete count.txt");
+    Serial.println("Failed to delete count.json");
   }
   touchCount = 0; // Reset touch count
 }
 
+/**
+ * @brief Deletes the credentials file from SPIFFS and restarts ESP.
+ */
 void spiffDeleteCred() {
   if (SPIFFS.remove("/Cred.txt")) {
     Serial.println("Cred.txt deleted successfully");
+    ESP.restart();
   } else {
     Serial.println("Failed to delete Cred.txt");
   }
@@ -166,18 +222,25 @@ void spiffDeleteCred() {
     file.close();
   }
 }
+
+/**
+ * @brief Deletes all SPIFFS files and restarts ESP.
+ */
 void spiffDeleteAll() {
   spiffDeleteCount();
   spiffDeleteCred();
+  ESP.restart();
 }
 
+/**
+ * @brief Configures WiFi mode based on saved credentials and starts servers.
+ */
 void setup() {
-  // Add a small delay at the beginning of setup
   delay(1000);
-  
   Serial.begin(115200);
   pinMode(buttonPin, INPUT_PULLUP);
   Serial.println("Button setup complete. Waiting for button press...");
+
   // Initialize SPIFFS
   if (!SPIFFS.begin(true)) {
     Serial.println("An Error has occurred while mounting SPIFFS");
@@ -189,7 +252,7 @@ void setup() {
   readSpiff();
 
   // Read initial touch count from count.txt
-  File file = SPIFFS.open("/count.txt", "r");
+  File file = SPIFFS.open("/count.json", "r");
   if (file) {
     touchCount = file.parseInt();
     file.close();
@@ -253,21 +316,21 @@ void setup() {
     request->send(SPIFFS, "/index.html", String(), false);
   });
   asyncServer.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(SPIFFS, "/style.css","text/css");
+    request->send(SPIFFS, "/style.css", "text/css");
   });
   asyncServer.on("/count", HTTP_GET, [](AsyncWebServerRequest *request){
-    File file = SPIFFS.open("/count.txt", "r");
+    File file = SPIFFS.open("/count.json", "r");
     if (!file) {
-      request->send(500, "text/plain", "Failed to open count.txt");
+      request->send(500, "text/plain", "Failed to open count.json");
       return;
     }
-    String count = file.readStringUntil('\n');
+    String data = file.readString();
     file.close();
-    request->send(200, "text/plain", count);
+    request->send(200, "application/json", data);
   });
   asyncServer.on("/deleteCount", HTTP_GET, [](AsyncWebServerRequest *request){
     spiffDeleteCount();
-    request->send(200, "text/plain", "count.txt deleted");
+    request->send(200, "text/plain", "count.json deleted");
   });
   asyncServer.on("/deleteCred", HTTP_GET, [](AsyncWebServerRequest *request){
     spiffDeleteCred();
@@ -304,14 +367,15 @@ void setup() {
   attachInterrupt(TOUCH_PIN, onTouch, FALLING);
 }
 
+/**
+ * @brief Main loop to handle web server and touch sensor events.
+ */
 void loop() {
   server.handleClient();
 
-
-
   int touchValue = touchRead(TOUCH_PIN);
 
-  if (touchValue < 40) {  // If touch is detected (adjust threshold as needed)
+  if (touchValue < 40) { // If touch is detected (adjust threshold as needed)
     Serial.println("Touch detected");
     touchCount++;
     Serial.print("Touch count: ");

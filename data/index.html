@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Touch Count</title>
+  <title>Impulse Graph</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
     var gateway = `ws://${window.location.hostname}:81/ws`;
     var websocket;
@@ -64,9 +65,54 @@
           document.getElementById('touchCount').innerText = '0';
         });
     }
+
+    async function fetchData() {
+      const response = await fetch('/data');
+      const text = await response.text();
+      const lines = text.trim().split('\n');
+      const data = lines.map(line => JSON.parse(line));
+      return data.map(entry => ({
+        x: new Date(entry.timestamp),
+        y: 1 // or any value representing the impulse
+      }));
+    }
+
+    async function renderChart() {
+      const data = await fetchData();
+      const ctx = document.getElementById('impulseChart').getContext('2d');
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          datasets: [{
+            label: 'Impulses',
+            data: data,
+            fill: false,
+            borderColor: 'rgb(75, 192, 192)',
+            tension: 0.1
+          }]
+        },
+        options: {
+          scales: {
+            x: {
+              type: 'time',
+              time: {
+                unit: 'second'
+              }
+            },
+            y: {
+              beginAtZero: true
+            }
+          }
+        }
+      });
+    }
+
+    renderChart();
   </script>
 </head>
 <body>
+  <h1>Impulse Graph</h1>
+  <canvas id="impulseChart" width="400" height="200"></canvas>
   <h1>Touch Count: <span id="touchCount">0</span></h1>
   <button onclick="deleteCount()">Delete Count</button>
   <button onclick="deleteCred()">Delete Cred</button>
